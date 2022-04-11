@@ -10,11 +10,11 @@
 // @namespace
 // ==/UserScript==
 
+// 劫持addEventListener方法
 const hackIn = () => {
-  // 劫持addEventListener方法
   const _addEvent = window.addEventListener;
   window.addEventListener = (ename, evt, opt) => {
-    const blackList = ['blur', 'ended'];
+    const blackList = ['blur']; // 拦截的事件名称列表
     if (typeof opt !== 'object' || typeof opt !== 'boolean') {
       // 第三个参数如果不传就给个默认
       opt = {
@@ -37,9 +37,7 @@ const hackIn = () => {
 
 hackIn();
 
-/**
- * 加载vue文件
- */
+// 加载vue文件
 const loadVue = () => {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -76,15 +74,16 @@ const renderEl = pageData => {
         </div>
       </p>
       <p>
-        <strong>自动下一个</strong>
+        <strong>自动刷课</strong>
         <div class="-wrapper-box auto-wrapper">
-          <span :class="['sound',autoStatus === item.auto ? '--active' : '']" v-for="(item,index) in autoChoice" :key="item.name" @click="changeAuto(item.auto)">{{item.name}}</span>
+          <span>自动跳转会在视频播放结束后开始</span><br>
+          <span>跳转状态： {{jumpStatus}}</span>
         </div>
       </p>
     </div>
   </div>
   `;
-  const vueRoot = document.createElement('div');
+  const vueRoot = document.createElement('div'); // 创建根节点
   vueRoot.id = '__vue-root';
   document.body.appendChild(vueRoot);
   let playTimer = null;
@@ -94,7 +93,7 @@ const renderEl = pageData => {
     template: template,
     data() {
       return {
-        playbackRate: 2,
+        playbackRate: 2, // 播放速率
         playRates: [
           {
             rate: 1
@@ -112,7 +111,7 @@ const renderEl = pageData => {
             rate: 2
           }
         ],
-        muted: true,
+        muted: true, // 是否静音
         muteActions: [
           {
             name: '静音',
@@ -123,45 +122,17 @@ const renderEl = pageData => {
             mute: false
           }
         ],
-        autoStatus: true,
-        autoChoice: [
-          {
-            name: '是',
-            auto: true
-          },
-          {
-            name: '否',
-            auto: false
-          }
-        ],
-        courseInfo: {},
-        playProcess: 0
+        jumpStatus: '未开始', // 跳转提示
+        courseInfo: {}, // 课程信息
+        playProcess: 0 // 播放进度
       };
     },
     computed: {},
-    watch: {
-      autoStatus: {
-        handler(newVal) {
-          const { video } = this.pageData;
-          if (!video) return;
-          if (newVal) {
-            console.log('ended事件监听');
-            video.onended = this.handleVideoEnd;
-          } else {
-            console.log('ended事件取消监听');
-            video.onended = null;
-          }
-        },
-        immediate: true
-      }
-    },
+    watch: {},
     methods: {
       changeVideoStatus(value, type) {
         this[type] = value;
         this.pageData.video[type] = value;
-      },
-      changeAuto(auto) {
-        this.autoStatus = auto;
       },
       getCourseInfo() {
         const { course, courseList } = this.pageData.courseInfo;
@@ -203,6 +174,11 @@ const renderEl = pageData => {
           (playCurrent.innerText / playTotal.innerText) *
           100
         ).toFixed(2)}%`;
+
+        if (+playCurrent.innerText >= +playTotal.innerText) {
+          // 倍速会对判断造成影响
+          this.handleVideoEnd();
+        }
       },
       updatePlaySetting() {
         const { video } = this.pageData;
@@ -217,17 +193,34 @@ const renderEl = pageData => {
           this.getVideoProcess();
           this.updatePlaySetting();
         }, 1000);
+        window.addEventListener('beforeunload', this.handlePageUnload);
+      },
+      handlePageUnload(e) {
+        // 监听页面卸载
+        this.jumpStatus = '正在跳转...';
+        clearInterval(playTimer);
+        clearTimeout(jumpTimer);
       },
       goNext() {
         const { current, courses } = this.courseInfo;
+        if (current > courses.length - 1) {
+          // 越界
+          return this.allDone();
+        }
         location.href = courses[current].url; // current-1是当前课程下标，current是下一节课程下标
       },
       handleVideoEnd() {
         debugger;
+        if (jumpTimer) clearTimeout(jumpTimer);
         jumpTimer = setTimeout(() => {
-          console.log('jump');
+          this.jumpStatus = '即将跳转...';
           this.goNext();
         }, 3000);
+      },
+      allDone() {
+        // 全部完成
+        clearInterval(playTimer);
+        clearTimeout(jumpTimer);
       }
     },
     mounted() {
@@ -246,10 +239,7 @@ const renderEl = pageData => {
         this.init();
       }
     },
-    unmouted() {
-      clearInterval(playTimer);
-      clearTimeout(jumpTimer);
-    }
+    unmouted() {}
   });
   app.config.globalProperties.pageData = pageData;
   app.mount(vueRoot);
