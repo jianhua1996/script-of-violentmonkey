@@ -11,10 +11,10 @@
 // ==/UserScript==
 
 // 劫持addEventListener方法
-const hackIn = () => {
+const hackAddEvent = () => {
   const _addEvent = window.addEventListener;
   window.addEventListener = (ename, evt, opt) => {
-    const blackList = ['blur']; // 拦截的事件名称列表
+    const blackList = ['blur', 'paused']; // 拦截的事件名称列表
     if (typeof opt !== 'object' || typeof opt !== 'boolean') {
       // 第三个参数如果不传就给个默认
       opt = {
@@ -35,7 +35,29 @@ const hackIn = () => {
   };
 };
 
-hackIn();
+hackAddEvent();
+
+const hackInterval = () => {
+  const _setInterval = window.setInterval;
+  const map = new Map();
+  window.setInterval = (func, time) => {
+    if (typeof func !== 'function') {
+      return;
+    }
+    let timer = _setInterval(func, time);
+    map.set(timer, func);
+  };
+
+  window.clearInterval = timer => {
+    if (map.has(timer)) {
+      map.delete(timer);
+    }
+  };
+
+  return map;
+};
+
+window._intervalMap = hackInterval();
 
 // 加载vue文件
 const loadVue = () => {
@@ -127,8 +149,6 @@ const renderEl = pageData => {
         playProcess: 0 // 播放进度
       };
     },
-    computed: {},
-    watch: {},
     methods: {
       changeVideoStatus(value, type) {
         this[type] = value;
@@ -193,32 +213,33 @@ const renderEl = pageData => {
           this.getVideoProcess();
           this.updatePlaySetting();
         }, 1000);
-        window.addEventListener('beforeunload', this.handlePageUnload);
+        window.addEventListener('beforeUnload', this.handlePageUnload);
       },
       handlePageUnload(e) {
         // 监听页面卸载
         this.jumpStatus = '正在跳转...';
-        clearInterval(playTimer);
-        clearTimeout(jumpTimer);
+        this.beforeUnload();
       },
       goNext() {
         const { current, courses } = this.courseInfo;
         if (current > courses.length - 1) {
           // 越界
-          return this.allDone();
+          this.beforeUnload();
+          this.jumpStatus = '已经是最后一节';
+          return;
         }
         location.href = courses[current].url; // current-1是当前课程下标，current是下一节课程下标
       },
       handleVideoEnd() {
-        debugger;
-        if (jumpTimer) clearTimeout(jumpTimer);
+        if (jumpTimer) return;
+        console.log('视频播放结束...');
+        this.jumpStatus = '即将跳转...';
         jumpTimer = setTimeout(() => {
-          this.jumpStatus = '即将跳转...';
           this.goNext();
-        }, 3000);
+        }, 2000);
       },
-      allDone() {
-        // 全部完成
+      beforeUnload() {
+        // 释放内存
         clearInterval(playTimer);
         clearTimeout(jumpTimer);
       }
@@ -238,8 +259,7 @@ const renderEl = pageData => {
       } else {
         this.init();
       }
-    },
-    unmouted() {}
+    }
   });
   app.config.globalProperties.pageData = pageData;
   app.mount(vueRoot);
@@ -335,7 +355,6 @@ const collectData = _ => {
       playTotal,
       playCurrent
     };
-
     resolve(pageData);
   });
 };
