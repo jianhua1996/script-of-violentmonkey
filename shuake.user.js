@@ -10,11 +10,10 @@
 // @namespace
 // ==/UserScript==
 
-// 劫持addEventListener方法
 const hackAddEvent = () => {
   const _addEvent = window.addEventListener;
-  window.addEventListener = (ename, evt, opt) => {
-    const blackList = ['blur', 'paused']; // 拦截的事件名称列表
+  const myHackEvent = (ename, evt, opt) => {
+    const blackList = ['blur', 'keydown']; // 拦截的事件名称列表
     if (typeof opt !== 'object' || typeof opt !== 'boolean') {
       // 第三个参数如果不传就给个默认
       opt = {
@@ -33,31 +32,12 @@ const hackAddEvent = () => {
     }
     _addEvent(ename, evt, opt); // 调用原方法
   };
+  window.addEventListener = myHackEvent;
 };
 
 hackAddEvent();
 
-const hackInterval = () => {
-  const _setInterval = window.setInterval;
-  const map = new Map();
-  window.setInterval = (func, time) => {
-    if (typeof func !== 'function') {
-      return;
-    }
-    let timer = _setInterval(func, time);
-    map.set(timer, func);
-  };
-
-  window.clearInterval = timer => {
-    if (map.has(timer)) {
-      map.delete(timer);
-    }
-  };
-
-  return map;
-};
-
-window._intervalMap = hackInterval();
+document.onkeydown = null;
 
 // 加载vue文件
 const loadVue = () => {
@@ -78,28 +58,21 @@ const renderEl = pageData => {
     <div class="wrapper">
       <p>
         <strong>课程信息</strong>
-        <div class="-wrapper-box info-wrapper">
+        <div class="-wrapper-box">
           <span>{{courseInfo.name}}</span><br>
-          <span>共{{courseInfo.total}}节，当前第{{courseInfo.current}}节，进度{{playProcess}}</span>
+          <span>共{{courseInfo.total}}节，当前第{{courseInfo.current}}节</span>
         </div>
       </p>
       <p>
-        <strong>倍速</strong>
-        <div class="-wrapper-box rate-wrapper">
-          <span :class="['rate',playbackRate === item.rate ? '--active' : '']" v-for="(item,index) in playRates" :key="item.rate" @click="changeVideoStatus(item.rate,'playbackRate')">{{item.rate}}倍速</span> 
+        <strong>视频信息</strong>
+        <div class="-wrapper-box" style="display: flex; align-items: center; justify-content: center;">
+          <span>
+            <input class="input-box" type="number" min="10" :max="videoInfo.duration" step="10" v-model="videoInfo.myTime" /> / {{videoInfo.duration}}
+          </span>
+          <button type="button" @click="startTask">刷课</button>
         </div>
-      </p>
-      <p>
-        <strong>静音</strong>
-        <div class="-wrapper-box mute-wrapper">
-          <span :class="['sound',muted === item.mute ? '--active' : '']" v-for="(item,index) in muteActions" :key="item.name" @click="changeVideoStatus(item.mute,'muted')">{{item.name}}</span>
-        </div>
-      </p>
-      <p>
-        <strong>自动刷课</strong>
-        <div class="-wrapper-box auto-wrapper">
-          <span>自动跳转会在视频播放结束后开始</span><br>
-          <span>跳转状态： {{jumpStatus}}</span>
+        <div class="-wrapper-box" style="padding-top: 15px;">
+          <span>{{msg}}</span>
         </div>
       </p>
     </div>
@@ -108,52 +81,18 @@ const renderEl = pageData => {
   const vueRoot = document.createElement('div'); // 创建根节点
   vueRoot.id = '__vue-root';
   document.body.appendChild(vueRoot);
-  let playTimer = null;
-  let jumpTimer = null;
+
   const app = Vue.createApp({
     el: '#c_video_ctrl',
     template: template,
     data() {
       return {
-        playbackRate: 2, // 播放速率
-        playRates: [
-          {
-            rate: 1
-          },
-          {
-            rate: 1.25
-          },
-          {
-            rate: 1.5
-          },
-          {
-            rate: 1.75
-          },
-          {
-            rate: 2
-          }
-        ],
-        muted: true, // 是否静音
-        muteActions: [
-          {
-            name: '静音',
-            mute: true
-          },
-          {
-            name: '不静音',
-            mute: false
-          }
-        ],
-        jumpStatus: '未开始', // 跳转提示
         courseInfo: {}, // 课程信息
-        playProcess: 0 // 播放进度
+        videoInfo: {}, // 视频信息
+        msg: ''
       };
     },
     methods: {
-      changeVideoStatus(value, type) {
-        this[type] = value;
-        this.pageData.video[type] = value;
-      },
       getCourseInfo() {
         const { course, courseList } = this.pageData.courseInfo;
         if (!course) {
@@ -162,103 +101,85 @@ const renderEl = pageData => {
         // 正则匹配《》中的内容
         const reg = /《(.*)》/;
         const result = reg.exec(course.innerText);
+        // 正则匹配query参数中的couid
+        const queryReg = /id=(\d+)/;
+        const courseId = queryReg.exec(course.href)[1];
 
         let currentIndex = 0;
         const courses = Array.from(courseList).map((item, index) => {
           const { className } = item;
           if (className.includes('current')) currentIndex = index;
           const { href, innerText } = item.children[0];
+          const id = item.attributes.olid.value;
           return {
             name: innerText,
-            url: href
+            url: href,
+            id
           };
         });
 
         this.courseInfo = {
           name: result[1],
           url: course.href,
+          id: courseId,
           current: currentIndex + 1,
           total: courses.length,
           courses
         };
         console.log(this.courseInfo, 'this.courseInfo');
       },
-      getVideoProcess() {
-        const { playTotal, playCurrent } = this.pageData.playInfo;
-        if (!playTotal || !playCurrent) {
-          this.playProcess = '未知进度';
-          return;
-        }
-
-        this.playProcess = `${(
-          (playCurrent.innerText / playTotal.innerText) *
-          100
-        ).toFixed(2)}%`;
-
-        if (+playCurrent.innerText >= +playTotal.innerText) {
-          // 倍速会对判断造成影响
-          this.handleVideoEnd();
-        }
+      getVideoInfo() {
+        if (typeof CKobject === 'undefined') return;
+        const duration = +CKobject._K_('totalTime').innerHTML;
+        this.videoInfo = {
+          duration,
+          myTime: duration // 默认设置为最大时间
+        };
       },
-      updatePlaySetting() {
-        const { video } = this.pageData;
-        if (!video) return;
-        this.playbackRate = video.playbackRate;
-        this.muted = video.muted;
+      startTask() {
+        if (!this.videoInfo.myTime) return (this.msg = '请输入刷课时间');
+        // debugger;
+        if (
+          this.videoInfo.myTime > this.videoInfo.duration ||
+          this.videoInfo.myTime < 10
+        )
+          return (this.msg = '请输入正确的刷课时间，不能小于10');
+
+        this.msg = '';
+        this.sendData()
+          .then(() => {
+            this.msg = '刷课成功';
+          })
+          .catch(() => {
+            this.msg = '刷课失败';
+          });
+      },
+      sendData() {
+        return new Promise((resolve, reject) => {
+          const couid = this.courseInfo.id;
+          const olid = this.courseInfo.courses[this.courseInfo.current - 1].id;
+          const studyTime = this.videoInfo.myTime;
+
+          fetch(
+            `/Ajax/StudentStudy.ashx?couid=${couid}&olid=${olid}&studyTime=${studyTime}&playTime=${
+              studyTime * 1000
+            }&totalTime=${this.videoInfo.duration * 1000}`
+          )
+            .then(res => {
+              resolve(res);
+            })
+            .catch(err => {
+              reject(err);
+            });
+        });
       },
       init() {
-        this.pageData.video.playbackRate = this.playbackRate; // 设置倍速
-        this.pageData.video.muted = this.muted; // 设置静音
-        playTimer = setInterval(() => {
-          this.getVideoProcess();
-          this.updatePlaySetting();
-        }, 1000);
-        window.addEventListener('beforeUnload', this.handlePageUnload);
-      },
-      handlePageUnload(e) {
-        // 监听页面卸载
-        this.jumpStatus = '正在跳转...';
-        this.beforeUnload();
-      },
-      goNext() {
-        const { current, courses } = this.courseInfo;
-        if (current > courses.length - 1) {
-          // 越界
-          this.beforeUnload();
-          this.jumpStatus = '已经是最后一节';
-          return;
-        }
-        location.href = courses[current].url; // current-1是当前课程下标，current是下一节课程下标
-      },
-      handleVideoEnd() {
-        if (jumpTimer) return;
-        console.log('视频播放结束...');
-        this.jumpStatus = '即将跳转...';
-        jumpTimer = setTimeout(() => {
-          this.goNext();
-        }, 2000);
-      },
-      beforeUnload() {
-        // 释放内存
-        clearInterval(playTimer);
-        clearTimeout(jumpTimer);
+        this.getCourseInfo();
+        this.getVideoInfo();
       }
     },
     mounted() {
-      this.getCourseInfo();
-      const { video } = this.pageData;
-      if (!video) {
-        // 当前页面没有视频容器
-        try {
-          setTimeout(() => {
-            this.goNext();
-          }, 1000);
-        } catch (e) {
-          console.log(e, '跳转失败');
-        }
-      } else {
-        this.init();
-      }
+      this.init();
     }
   });
   app.config.globalProperties.pageData = pageData;
@@ -281,7 +202,7 @@ const renderStyle = function () {
     color: #ff8864;
     border: 2px solid #ff8864;
   }
-  #c_video_ctrl .wrapper{
+  #c_video_ctrl .wrapper {
     width: 400px;
     height: auto;
     border-radius: 10px;
@@ -294,7 +215,7 @@ const renderStyle = function () {
     color: #000;
     padding-bottom: 30px;
   }
-  #c_video_ctrl:hover .wrapper{
+  #c_video_ctrl:hover .wrapper {
     display: block;
   }
   #c_video_ctrl .wrapper p {
@@ -305,7 +226,6 @@ const renderStyle = function () {
     flex-wrap: wrap;
     justify-content: space-around;
   }
-
   #c_video_ctrl .wrapper p strong {
     width: 100%;
     font-size: 18px;
@@ -316,16 +236,26 @@ const renderStyle = function () {
     padding: 0 10px;
     color: #333;
   }
-  #c_video_ctrl .wrapper p span:hover{
+  #c_video_ctrl .wrapper p span:hover {
     color: #ff8864;
   }
-  #c_video_ctrl .wrapper p span.--active{
-    color: #ff8864;
-    border: 2px solid #ff8864;
-    border-radius: 1em;
-  }
-  .-wrapper-box{
+  .-wrapper-box {
     line-height: 1.5em;
+    width: 100%;
+  }
+  .input-box{
+    min-width: 60px;
+    outline: 0;
+    font-size: unset;
+  }
+  button {
+    font-size: unset;
+    background: blue;
+    color: #fff;
+    padding: 0 10px;
+    height: 100%;
+    border-radius: 6px;
+    cursor: pointer;
   }
   `;
   const style = document.createElement('style');
@@ -342,18 +272,10 @@ const collectData = _ => {
       reject();
     }
 
-    const video = document.querySelector('#ckplayer_videobox'); // 视频元素
-    pageData.video = video;
     const course = document.querySelector('.courseBox > a'); // 课程基本信息
     pageData.courseInfo = {
       course,
       courseList
-    };
-    const playTotal = document.querySelector('#totalTime'); // 视频总时长
-    const playCurrent = document.querySelector('#playTime'); // 视频当前播放时长
-    pageData.playInfo = {
-      playTotal,
-      playCurrent
     };
     resolve(pageData);
   });
