@@ -69,7 +69,7 @@ const renderEl = pageData => {
           <span>
             <input class="input-box" type="number" min="10" :max="videoInfo.duration" step="10" v-model="videoInfo.myTime" /> / {{videoInfo.duration}}
           </span>
-          <button type="button" @click="startTask">刷课</button>
+          <button type="button" v-if="videoInfo.duration" @click="startTask">刷课</button>
         </div>
         <div class="-wrapper-box" style="padding-top: 15px;">
           <span>{{msg}}</span>
@@ -130,7 +130,10 @@ const renderEl = pageData => {
       },
       getVideoInfo() {
         if (typeof CKobject === 'undefined') return;
-        const duration = +CKobject._K_('totalTime').innerHTML;
+        const totalTime = CKobject._K_('totalTime');
+        if (!totalTime)
+          return (this.msg = '未获取到时长信息，请确认是否在视频页面');
+        const duration = +totalTime.innerHTML;
         this.videoInfo = {
           duration,
           myTime: duration // 默认设置为最大时间
@@ -159,7 +162,6 @@ const renderEl = pageData => {
           const couid = this.courseInfo.id;
           const olid = this.courseInfo.courses[this.courseInfo.current - 1].id;
           const studyTime = this.videoInfo.myTime;
-
           fetch(
             `/Ajax/StudentStudy.ashx?couid=${couid}&olid=${olid}&studyTime=${studyTime}&playTime=${
               studyTime * 1000
